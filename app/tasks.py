@@ -1,3 +1,4 @@
+# app/tasks.py
 from app.worker import celery_app
 from .utils import send_email
 
