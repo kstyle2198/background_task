@@ -1,11 +1,18 @@
-# docker-compose.yml
+# path : docker-compose.yml
+# command : docker-compose -f docker-compose.prod.yml up --build -d
+
+이렇게 구성하면 훨씬 더 안정적이고 안전하며 효율적인 운영 환경을 구축할 수 있습니다.
 services:
+  # Redis 서비스
   redis:
     container_name: my_redis
-    image: redis
+    build:
+      context: .
+      dockerfile: Dockerfile.redis
     ports:
       - "6379:6379"
 
+  # Redis 모니터링을 위한 Redis Commander (기존과 동일)
   redis-commander:
     container_name: redis_monitor
     image: rediscommander/redis-commander
@@ -13,10 +20,18 @@ services:
       - "8081:8081"
     environment:
       - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
 
+  # Celery 워커 서비스
   worker:
-    build: .
-    command: celery -A app.worker.celery_app worker --loglevel=info -P eventlet --include=app.tasks
+    container_name: my_worker
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    # 개발 환경에서 코드 변경 시 자동 재시작을 위해 command를 여기에 유지합니다.
+    # production 환경에서는 Dockerfile.worker의 CMD를 사용하고 아래 command를 제거할 수 있습니다.
+    command: celery -A app.worker.celery_app worker --loglevel=info -P eventlet
     volumes:
       - .:/app
     environment:
@@ -25,8 +40,13 @@ services:
     depends_on:
       - redis
 
+  # FastAPI 애플리케이션 서비스
   fastapi:
-    build: .
+    container_name: my_fastapi
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    # 개발 환경에서 코드 자동 리로드를 위해 command를 여기에 유지합니다.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
@@ -39,4 +59,5 @@ services:
       - redis
       - worker
 
-
+volumes:
+  redis-data:

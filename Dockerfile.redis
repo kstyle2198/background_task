@@ -1,0 +1,6 @@
+# Redis 서비스를 위한 Dockerfile
+# 참고: 일반적으로는 docker-compose.yml에서 'image: redis'를 직접 사용하는 것이 더 효율적입니다.
+# 하지만 요청에 따라 Dockerfile로 분리했습니다.
+
+# path : dockerfile.redis
+FROM redis:latest
