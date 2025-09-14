@@ -12,7 +12,7 @@
 - git clone [repo url] + .env_example ---> .env.prod
 - dev command : docker-compose up -d
 - prod command : docker-compose -f docker-compose.prod.yml up --build -d
-- All you need to do is just changing "app/utils/bg_process.py" with your own background prosess"
+- All you need to do is just changing "app/utils/bg_process.py" with your own background process"
   (current bg process is a simple mail sending process with intended time sleep)
 
 
