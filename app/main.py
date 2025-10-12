@@ -4,6 +4,11 @@ from celery.result import AsyncResult
 from app.tasks import process
 from app.worker import celery_app
 
+import logging
+from .utils.setlogger import setup_logger
+logger = setup_logger(f"{__name__}", level=logging.INFO)
+
+
 app = FastAPI()
 
 

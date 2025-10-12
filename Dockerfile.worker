@@ -27,6 +27,15 @@ RUN pip install --no-cache -r requirements.txt
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Celery 워커 실행
-CMD ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "-P", "eventlet"]
+# 환경 변수를 통한 유연한 설정
+ENV CELERY_WORKER_CONCURRENCY=4
+ENV CELERY_WORKER_POOL=prefork
+ENV CELERY_WORKER_MAX_TASKS_PER_CHILD=1000
+ENV CELERY_WORKER_LOGLEVEL=info
 
+
+# Celery 워커 실행 (병렬처리 최적화)
+CMD ["sh", "-c", "celery -A app.worker.celery_app worker --loglevel=${CELERY_WORKER_LOGLEVEL} --concurrency=${CELERY_WORKER_CONCURRENCY} -P ${CELERY_WORKER_POOL} --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD}", "-P", "eventlet"]
+
+# Celery 워커 실행
+# CMD ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "-P", "eventlet"]
