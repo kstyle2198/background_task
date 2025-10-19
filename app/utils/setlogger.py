@@ -60,7 +60,7 @@ def setup_logger(log_name: str, level=logging.DEBUG) -> logging.Logger:
         파일 및 컬러 콘솔 출력이 동시에 적용된 로거 객체.
     """
     # create logger file folder 
-    make_folder = "./logging/"
+    make_folder = "./logs/"
     os.makedirs(make_folder, exist_ok=True)
     today = dt.date.today()
     filename = f"{make_folder}{today.month:02d}-{today.day:02d}-{today.year}.log"
