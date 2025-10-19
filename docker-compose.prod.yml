@@ -1,55 +1,72 @@
+version: '3.8' # 버전을 명시하는 것이 좋습니다.
+
 services:
-  # Redis 서비스: 공식 이미지를 직접 사용하고, 데이터 영속성을 보장합니다.
+  # Redis 서비스: 변경 없음. 훌륭합니다.
   redis:
     container_name: prod_redis
     image: redis:7-alpine
     command: redis-server --save 60 1 --loglevel warning
     volumes:
       - redis-data:/data
+    networks:
+      # [개선 ③] 명시적 네트워크 사용
+      - prod-network
     restart: unless-stopped
 
-  # Redis Commander: 필요 시에만 실행하거나, 내부 네트워크에서만 접근하도록 설정하는 것이 좋습니다.
+  # [개선 ①] 
+  # redis-commander는 프로덕션에서 제거하거나,
+  # 127.0.0.1 (localhost)에서만 접근하도록 변경하는 것을 강력히 권장합니다.
   redis-commander:
     container_name: prod_redis_monitor
     image: rediscommander/redis-commander
     ports:
-      - "8081:8081"
+      # [개선 ①] 외부 노출 대신 서버 내부에서만 접근
+      - "127.0.0.1:8081:8081"
     environment:
       - REDIS_HOSTS=local:redis:6379
+    networks:
+      # [개선 ③]
+      - prod-network
     restart: unless-stopped
     depends_on:
       - redis
 
-  # Celery 워커 서비스: 개발용 command와 volume을 제거하고, 재시작 정책을 추가합니다.
+  # Celery 워커 서비스: 변경 없음.
   worker:
     container_name: prod_worker
     build:
       context: .
       dockerfile: Dockerfile.worker
-    # command는 Dockerfile.worker의 CMD를 사용합니다.
-    # volumes는 이미지에 코드를 포함시키므로 제거합니다.
     env_file:
       - ./.env.prod
+    networks:
+      # [개선 ③]
+      - prod-network
     restart: unless-stopped
     depends_on:
-      - redis
+      - redis # 워커는 redis에만 의존합니다.
 
-  # FastAPI 서비스: Gunicorn을 사용하여 여러 워커 프로세스로 실행하여 성능을 높입니다.
+  # FastAPI 서비스: gunicorn 사용
   fastapi:
     container_name: prod_fastapi
     build:
       context: .
       dockerfile: Dockerfile.fastapi
-    # command는 Dockerfile.fastapi의 CMD(gunicorn)를 사용합니다.
-    # volumes는 이미지에 코드를 포함시키므로 제거합니다.
     ports:
       - "8000:8000"
     env_file:
       - ./.env.prod
+    networks:
+      # [개선 ③]
+      - prod-network
     restart: unless-stopped
     depends_on:
-      - redis
-      - worker
+      - redis # [개선 ②] worker 의존성 제거. redis만 필요합니다.
+
+# [개선 ③] 네트워크 정의
+networks:
+  prod-network:
+    driver: bridge
 
 # Redis 데이터 영속성을 위한 볼륨 정의
 volumes:

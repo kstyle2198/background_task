@@ -1,12 +1,21 @@
 # app/worker.py
+
 from celery import Celery
 import os
+
+import logging
+from app.utils.setlogger import setup_logger
+logger = setup_logger(f"{__name__}", level=logging.INFO)
+
+# REDIS_URL = "redis://localhost:6379"
+REDIS_URL = "redis://redis:6379"  # docker 
+
 
 # Fetch Celery configuration from environment variables
 celery_app = Celery(
     'background_tasks',
-    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
-    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    broker=os.getenv("CELERY_BROKER_URL", f"{REDIS_URL}/0"),
+    backend=os.getenv("CELERY_RESULT_BACKEND", f"{REDIS_URL}/1")
 )
 
 celery_app.conf.update(result_expires=60,   # Results expire after 1 minute

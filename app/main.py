@@ -6,13 +6,16 @@ from fastapi import FastAPI, HTTPException
 from celery.result import AsyncResult
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from app.tasks import process
-from app.worker import celery_app
+from sse_starlette.sse import EventSourceResponse
+
+# import redis.asyncio as aioredis  # 비동기 redis 클라이언트 (FastAPI용)
+
+import redis.asyncio as redis
+from app.tasks import process, long_running_task
 
 import logging
 from .utils.setlogger import setup_logger
 logger = setup_logger(f"{__name__}", level=logging.INFO)
-
 
 
 # 요청 모델 정의
@@ -21,133 +24,66 @@ class EmailRequest(BaseModel):
 
 app = FastAPI()
 
-
-
-@app.get("/status/{task_id}")
-async def get_task_status(task_id: str):
-    result: AsyncResult = celery_app.AsyncResult(task_id)
-    if result.state == "FAILURE":
-        raise HTTPException(status_code=500, detail=str(result.result))
-    return {
-        "task_id": task_id,
-        "status": result.state,
-        "result": result.get() if result.ready() else None
-    }
-
-
-# @app.post("/send-email/")
-# async def trigger_email(email_address: str):
-#     result = process.delay(email_address)  # .delay() offloads the task to Celery
-#     return {
-#         "message": f"Email to {email_address} has been queued.",
-#         "task_id": result.id,
-#         "status": "queued"
-#         }
+# FastAPI가 구독(Subscribe)에 사용할 비동기 Redis 클라이언트
+# Pub/Sub용으로 DB 2번을 사용 (worker와 동일)
+REDIS_URL = "redis://redis:6379"
+redis_subscriber_client = redis.from_url(f"{REDIS_URL}/2", decode_responses=True)
 
 
 @app.post("/send-email/")
 async def trigger_email(request: EmailRequest):
-    result = process.delay(request.email_address)
+    result = long_running_task.delay(request.email_address)
     return {
         "message": f"Email to {request.email_address} has been queued.",
         "task_id": result.id,
         "status": "queued"
     }
 
-# SSE 스트리밍을 위한 엔드포인트
-@app.get("/stream/{task_id}")
-async def stream_task_progress(task_id: str):
-    """
-    SSE 스트리밍으로 태스크 진행상태 실시간 전송
-    """
+
+@app.get("/stream-results/{task_id}")
+async def stream_results(task_id: str):
+    
     async def event_generator():
-        result: AsyncResult = celery_app.AsyncResult(task_id)
+        """
+        Redis Pub/Sub 채널을 구독하고 메시지가 오면 yield하는 생성기
+        """
+        channel_name = f"task_results:{task_id}"
+        pubsub = redis_subscriber_client.pubsub()
+        await pubsub.subscribe(channel_name)
         
-        # 초기 상태 전송
-        yield f"data: {json.dumps({'task_id': task_id, 'status': result.state, 'progress': 0})}\n\n"
-        
-        # 상태 추적
-        last_state = result.state
-        max_retries = 60  # 최대 5분 대기 (5초 * 60)
-        retry_count = 0
-        
-        while not result.ready() and retry_count < max_retries:
-            # 상태 변경 감지
-            if result.state != last_state:
-                last_state = result.state
-                progress = calculate_progress(result.state)
+        try:
+            while True:
+                # 1. Polling(sleep) 대신, 메시지가 올 때까지 비동기로 대기
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, 
+                    timeout=60  # 60초간 메시지 없으면 타임아웃
+                )
                 
-                yield f"data: {json.dumps({'task_id': task_id, 'status': result.state, 'progress': progress})}\n\n"
-            
-            # 결과가 준비되었는지 확인
-            if result.ready():
+                if message is None:
+                    # 60초 타임아웃 발생 -> 클라이언트 연결 유지를 위한 'ping'
+                    yield {"event": "ping", "data": "Waiting for task..."}
+                    continue # 다시 메시지 대기
+                
+                # 2. 작업자로부터 메시지 도착! +JSON decode
+                message_data = message["data"]
+                if isinstance(message_data, bytes):
+                    message_data = message_data.decode("utf-8")
+                data = json.loads(message_data)
+                
+                # 3. 클라이언트에게 받은 데이터를 그대로 전송
+                yield {"event": data["event"], "data": data["data"]}
+                
+                # 4. 작업이 완료되었으므로(성공/실패 무관) 루프 및 스트림 종료
                 break
                 
-            # 5초 대기
-            await asyncio.sleep(5)
-            retry_count += 1
-        
-        # 최종 결과 전송
-        if result.ready():
-            if result.successful():
-                final_result = result.get()
-                yield f"data: {json.dumps({'task_id': task_id, 'status': 'SUCCESS', 'progress': 100, 'result': final_result})}\n\n"
-            else:
-                yield f"data: {json.dumps({'task_id': task_id, 'status': 'FAILURE', 'progress': 100, 'error': str(result.result)})}\n\n"
-        else:
-            yield f"data: {json.dumps({'task_id': task_id, 'status': 'TIMEOUT', 'progress': 0, 'error': 'Task processing timeout'})}\n\n"
-        
-        # 스트림 종료
-        yield "data: [DONE]\n\n"
-    
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Cache-Control"
-        }
-    )
+        except asyncio.CancelledError:
+            # 클라이언트 연결이 끊어지면 발생
+            print(f"Client disconnected from {task_id}")
+            raise
+        finally:
+            # 스트림이 어쨌든 종료되면 구독 해제
+            print(f"Unsubscribing from {channel_name}")
+            await pubsub.unsubscribe(channel_name)
+            await pubsub.close()
 
-def calculate_progress(state: str) -> int:
-    """
-    상태에 따른 진행률 계산
-    """
-    progress_map = {
-        'PENDING': 0,
-        'STARTED': 25,
-        'RETRY': 50,
-        'PROGRESS': 75,  # 사용자 정의 진행 상태
-        'SUCCESS': 100,
-        'FAILURE': 100
-    }
-    return progress_map.get(state, 0)
-
-# 진행률 업데이트이 가능한 태스크 예제
-# @app.post("/send-email-with-progress/")
-# async def trigger_email_with_progress(email_address: str):
-#     """
-#     진행률 업데이트가 가능한 이메일 전송 태스크
-#     """
-#     result = process.apply_async(args=[email_address], kwargs={'with_progress': True})
-#     return {
-#         "message": f"Email to {email_address} has been queued with progress tracking.",
-#         "task_id": result.id,
-#         "status": "queued",
-#         "stream_url": f"/stream/{result.id}"
-#     }
-
-@app.post("/send-email-with-progress/")
-async def trigger_email_with_progress(request: EmailRequest):
-    """
-    진행률 업데이트가 가능한 이메일 전송 태스크
-    """
-    result = process.apply_async(args=[request.email_address], kwargs={'with_progress': True})
-    return {
-        "message": f"Email to {request.email_address} has been queued with progress tracking.",
-        "task_id": result.id,
-        "status": "queued",
-        "stream_url": f"/stream/{result.id}"
-    }
+    return EventSourceResponse(event_generator())
