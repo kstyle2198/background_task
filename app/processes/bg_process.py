@@ -1,10 +1,11 @@
 # app/processes/bg_process.py
 import time
-import logging
-from app.utils.setlogger import setup_logger
-logger = setup_logger(f"{__name__}", level=logging.INFO)
-
 import random
+from app.utils.config import get_config
+from app.utils.setlogger import setup_logger
+config = get_config()
+logger = setup_logger(f"{__name__}", level=config.LOG_LEVEL)
+
 
 def send_email(email_address:str):
     logger.debug(f"Start Sending email to {email_address}")

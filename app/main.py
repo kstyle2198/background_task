@@ -1,21 +1,19 @@
 # app/main.py
 import asyncio
 import json
-import time
 from fastapi import FastAPI, HTTPException
 from celery.result import AsyncResult
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-# import redis.asyncio as aioredis  # 비동기 redis 클라이언트 (FastAPI용)
-
 import redis.asyncio as redis
-from app.tasks import process, long_running_task
+from app.tasks import long_running_task
 
-import logging
+from .utils.config import get_config
 from .utils.setlogger import setup_logger
-logger = setup_logger(f"{__name__}", level=logging.INFO)
+config = get_config()
+logger = setup_logger(f"{__name__}", level=config.LOG_LEVEL)
 
 
 # 요청 모델 정의
@@ -24,11 +22,7 @@ class EmailRequest(BaseModel):
 
 app = FastAPI()
 
-# FastAPI가 구독(Subscribe)에 사용할 비동기 Redis 클라이언트
-# Pub/Sub용으로 DB 2번을 사용 (worker와 동일)
-REDIS_URL = "redis://redis:6379"
-redis_subscriber_client = redis.from_url(f"{REDIS_URL}/2", decode_responses=True)
-
+redis_subscriber_client = redis.from_url(config.REDIS_PUBSUB_URL, decode_responses=True)
 
 @app.post("/send-email/")
 async def trigger_email(request: EmailRequest):
@@ -38,7 +32,6 @@ async def trigger_email(request: EmailRequest):
         "task_id": result.id,
         "status": "queued"
     }
-
 
 @app.get("/stream-results/{task_id}")
 async def stream_results(task_id: str):

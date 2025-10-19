@@ -66,3 +66,23 @@ Redis Commander	redis_monitor	8081:8081	웹 UI를 통해 Redis 데이터를 시�
 
     REDIS_HOSTS: Redis Commander가 연결할 Redis 인스턴스 정보
 
+
+## [주의사항] Async 코드와 Celery의 비동기 구조 충돌
+
+Celery 워커는 기본적으로 동기(Sync) 기반으로 실행됩니다.
+따라서 async def 함수를 그대로 태스크로 등록하면 다음과 같은 문제가 발생할 수 있습니다:
+
+```python
+@celery.task
+async def my_task():  # ❌ 이렇게 하면 문제 발생
+    await some_async_func()
+```
+
+해결방법 : asyncio.run() 또는 anyio.from_thread.run()을 사용해 명시적으로 async 루프를 실행해야 합니다.
+
+```python
+@celery.task
+def my_task():
+    import asyncio
+    asyncio.run(some_async_func())
+```
