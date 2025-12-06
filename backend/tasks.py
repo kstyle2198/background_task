@@ -1,13 +1,15 @@
-# app/tasks.py
+# backend/tasks.py
 import json
+from typing import Optional
+from pathlib import Path
 import redis  # 동기 redis 클라이언트 (Celery 작업자용)
 from .utils.setlogger import setup_logger
 from .utils.config import get_config
 config = get_config()
 logger = setup_logger(f"{__name__}", level=config.LOG_LEVEL)
 
-from app.worker import celery_app
-from .processes.bg_process import send_email
+from backend.worker import celery_app
+from .process.test_process import test_process_for_five_seconds
 from pydantic import ValidationError
 
 # Celery 작업자가 결과를 발행할 때 사용할 동기 Redis 클라이언트
@@ -25,7 +27,7 @@ def long_running_task(self, email_address: str):
     
     try:
         logger.info(f"Task {task_id} started...")
-        result = send_email(email_address)
+        result = test_process_for_five_seconds(email_address)
         logger.info(f"Task {task_id} finished.")
         
         # 성공 결과를 JSON으로 만들어 채널에 발행
@@ -49,3 +51,8 @@ def long_running_task(self, email_address: str):
         redis_pubsub_client.publish(channel_name, payload)
         # Celery가 이 태스크를 '실패'로 기록하도록 예외를 다시 발생시킴
         raise
+
+
+
+
+

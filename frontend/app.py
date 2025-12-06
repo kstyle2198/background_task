@@ -1,60 +1,78 @@
 import streamlit as st
 import requests
-import sseclient
 import time
+import json
 
-FASTAPI_URL = "http://localhost:8000"  # FastAPI 서버 주소 (Docker 환경에 맞게 변경)
+# FastAPI 서버 주소
+API_BASE = "http://localhost:8008"   # 필요 시 변경
 
-st.set_page_config(page_title="Email Sender", page_icon="📧", layout="centered")
 
-st.title("📧 Email Sender (Celery + FastAPI + Redis + Streamlit)")
-st.write("이메일 전송 작업을 비동기로 실행하고, SSE를 통해 실시간 상태를 수신합니다.")
+st.set_page_config(page_title="Task Polling Demo", layout="centered")
 
-email = st.text_input("받는 이메일 주소를 입력하세요:")
-send_btn = st.button("Send Email")
+if "task_ids" not in st.session_state: st.session_state.task_ids = []
+if "pending_results" not in st.session_state: st.session_state.pending_results = []
+if "success_results" not in st.session_state: st.session_state.success_results = []
 
-# 상태 영역
-status_placeholder = st.empty()
 
-if send_btn and email:
-    # 1️⃣ 작업 요청
-    try:
-        with st.spinner("작업 요청 중..."):
-            resp = requests.post(f"{FASTAPI_URL}/send-email", json={"email_address": email})
-            resp.raise_for_status()
-            task_info = resp.json()
-            task_id = task_info["task_id"]
-            st.success(f"작업이 큐에 등록되었습니다. (task_id: {task_id})")
-    except Exception as e:
-        st.error(f"요청 실패: {e}")
+st.title("Task Polling Demo")
+st.markdown("---")
+
+
+if st.button("Task ID 초기화"):
+    st.session_state.task_ids = []
+    st.session_state.pending_results = []
+    st.session_state.success_results = []
+
+# ----------------------------
+# 1) Email 입력 및 작업 트리거
+# ----------------------------
+email = st.text_input("이메일 입력", placeholder="example@test.com")
+
+if st.button("Task Queue"):
+    if not email:
+        st.warning("이메일을 입력하세요.")
         st.stop()
 
-    # 2️⃣ SSE 구독
-    st.write("📡 실시간 결과 수신 중...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
+    # FastAPI POST 호출
     try:
-        stream_url = f"{FASTAPI_URL}/stream-results/{task_id}"
-        messages = sseclient.SSEClient(stream_url)
+        response = requests.post(
+            f"{API_BASE}/test_for_five_seconds/",
+            json={"email_address": email}
+        )
+        data = response.json()
+        data
+        task_id = data.get("task_id")
+        if task_id not in st.session_state.task_ids:
+            st.session_state.task_ids.append(task_id)
 
-        start_time = time.time()
-        for i, event in enumerate(messages):
-            if event.event == "ping":
-                # 주기적 ping
-                status_text.info("⏳ 작업 대기 중...")
-                progress_bar.progress(min(i * 10 % 100, 99))
-            elif event.event == "task_result":
-                status_text.success(f"✅ 완료: {event.data}")
-                progress_bar.progress(100)
-                break
-            elif event.event == "task_error":
-                status_text.error(f"❌ 에러: {event.data}")
-                progress_bar.progress(100)
-                break
+        st.success(f"작업이 큐에 등록되었습니다! task_id: {task_id}")
+
     except Exception as e:
-        status_text.error(f"SSE 연결 실패: {e}")
-    finally:
-        elapsed = round(time.time() - start_time, 2)
-        st.info(f"스트림 종료 (소요시간: {elapsed}초)")
+        st.error(f"API 요청 실패: {e}")
+
+# -----------------------------
+# 2) 폴링 
+# -----------------------------
+if st.button("Polling"):
+    st.session_state.pending_results = []
+    st.session_state.success_results = []
+    for id in st.session_state.task_ids:
+        status_response = requests.get(f"{API_BASE}/task_status/{id}")
+        status_data = json.loads(status_response.text)
+        if status_data not in st.session_state.pending_results and status_data["status"]!="SUCCESS" :
+            st.session_state.pending_results.append(status_data)
+        if status_data not in st.session_state.success_results and status_data["status"]=="SUCCESS" :
+            st.session_state.success_results.append(status_data)
+
+col1, col2 = st.columns(2)
+with col1:
+    st.info(f"대기중인 작업: {len(st.session_state.pending_results)}")
+    with st.container(border=True, height=500):
+        for p in st.session_state.pending_results:
+            st.warning(p)
+with col2:
+    st.info(f"성공한 작업: {len(st.session_state.success_results)}")
+    with st.container(border=True, height=500):
+        for s in st.session_state.success_results:
+            st.success(s)
 
